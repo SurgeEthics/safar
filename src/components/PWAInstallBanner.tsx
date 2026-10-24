@@ -6,12 +6,14 @@ import { SafarLogo } from './SafarLogo';
 
 interface PWAInstallBannerProps {
   appName?: string;
+  customAppUrl?: string;
 }
 
 const PRODUCTION_LIVE_URL = 'https://safar-gafargaon.pages.dev';
 
 export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
   appName = 'সফর (Safar) গফরগাঁও',
+  customAppUrl
 }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showShareModal, setShowShareModal] = useState(false);
@@ -33,6 +35,9 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
   }, [showShareModal, showManualGuide]);
 
   const getPublicShareUrl = (): string => {
+    if (customAppUrl && customAppUrl.trim().length > 0) {
+      return customAppUrl.trim();
+    }
     if (typeof window !== 'undefined') {
       const origin = window.location.origin;
       if (origin.includes('pages.dev') || (!origin.includes('ais-dev-') && !origin.includes('localhost') && origin.includes('.'))) {
@@ -55,8 +60,8 @@ export const PWAInstallBanner: React.FC<PWAInstallBannerProps> = ({
           light: '#ffffff',
         },
       })
-        .then((url: string) => setQrDataUrl(url))
-        .catch((err: unknown) => console.error('Failed to generate QR:', err));
+        .then((url) => setQrDataUrl(url))
+        .catch((err) => console.error('Failed to generate QR:', err));
     }
   }, [currentUrl]);
 

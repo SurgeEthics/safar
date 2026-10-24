@@ -1,6 +1,6 @@
 /**
  * Real-Time Live Location Service for Safar Gafargaon
- * Connects to Cloudflare Worker Edge (or built-in local resilient engine)
+ * Connects to Cloudflare Worker (or built-in full-stack WebSocket/REST)
  * Supports real-time peer syncing for both Passengers and Drivers
  */
 
@@ -51,13 +51,11 @@ type StateListener = (state: {
 class LiveLocationService {
   private ws: WebSocket | null = null;
   private customServerUrl: string = '';
-  private status: ConnectionStatus = 'connected';
+  private status: ConnectionStatus = 'disconnected';
   private latencyMs: number = 24;
   private pingStartTime: number = 0;
   private pingInterval: any = null;
-  private jitterInterval: any = null;
   private reconnectTimeout: any = null;
-  private connectFallbackTimeout: any = null;
   private broadcastChannel: BroadcastChannel | null = null;
 
   private drivers: Map<string, LiveDriverLocation> = new Map();
@@ -71,7 +69,7 @@ class LiveLocationService {
         this.customServerUrl = savedUrl;
       }
 
-      // Initialize cross-tab BroadcastChannel for zero-latency multi-tab sync
+      // Initialize cross-tab BroadcastChannel for immediate multi-tab sync
       try {
         if ('BroadcastChannel' in window) {
           this.broadcastChannel = new BroadcastChannel('safar_realtime_channel');
@@ -83,47 +81,8 @@ class LiveLocationService {
         // BroadcastChannel unavailable
       }
 
-      // Initial active connection
-      this.status = 'connected';
-      this.latencyMs = 24;
-
       this.connect();
       this.startRestPolling();
-      this.startJitterHeartbeat();
-    }
-  }
-
-  // Populate active drivers from the app catalog if empty
-  public syncDriversFromCatalog(catalogDrivers: any[]) {
-    if (Array.isArray(catalogDrivers) && catalogDrivers.length > 0) {
-      let changed = false;
-      catalogDrivers.forEach((d: any) => {
-        if (!this.drivers.has(d.id)) {
-          this.drivers.set(d.id, {
-            id: d.id,
-            name: d.name || d.nameBn || 'চালক',
-            phone: d.phone || '',
-            category: d.category || 'cng',
-            categoryBengali: d.categoryBengali || 'যানবাহন',
-            vehicleModel: d.vehicleModel || d.vehicleName || 'যানবাহন',
-            plateNumber: d.plateNumber || d.licensePlate || '',
-            standName: d.standName || '',
-            lat: typeof d.lat === 'number' ? d.lat : 24.5535,
-            lng: typeof d.lng === 'number' ? d.lng : 90.5518,
-            speed: d.approxSpeedKmh || 25,
-            heading: 0,
-            accuracy: 10,
-            rating: typeof d.rating === 'number' ? d.rating : 4.9,
-            isOnline: d.isOnline ?? true,
-            isAvailable: true,
-            updatedAt: Date.now()
-          });
-          changed = true;
-        }
-      });
-      if (changed) {
-        this.notify();
-      }
     }
   }
 
@@ -220,38 +179,12 @@ class LiveLocationService {
 
   public connect() {
     if (typeof window === 'undefined') return;
-
-    // Clear any previous fallback timeout
-    if (this.connectFallbackTimeout) {
-      clearTimeout(this.connectFallbackTimeout);
-      this.connectFallbackTimeout = null;
-    }
-
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN)) {
-      this.status = 'connected';
-      this.notify();
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    // If custom URL is set, show quick connecting then fallback to connected
-    if (this.customServerUrl) {
-      this.status = 'connecting';
-      this.notify();
-    } else {
-      // Default built-in is ALWAYS connected
-      this.status = 'connected';
-      this.latencyMs = Math.floor(Math.random() * 6) + 21;
-      this.notify();
-    }
-
-    // Never get stuck in 'connecting': fallback to connected within 1000ms
-    this.connectFallbackTimeout = setTimeout(() => {
-      if (this.status === 'connecting') {
-        this.status = 'connected';
-        this.latencyMs = Math.floor(Math.random() * 6) + 22;
-        this.notify();
-      }
-    }, 1000);
+    this.status = 'connecting';
+    this.notify();
 
     const wsUrl = this.getWebSocketUrl();
 
@@ -259,14 +192,11 @@ class LiveLocationService {
       this.ws = new WebSocket(wsUrl);
 
       this.ws.onopen = () => {
-        if (this.connectFallbackTimeout) {
-          clearTimeout(this.connectFallbackTimeout);
-          this.connectFallbackTimeout = null;
-        }
         this.status = 'connected';
-        this.latencyMs = Math.floor(Math.random() * 6) + 20;
         this.notify();
         this.startHeartbeat();
+
+        // Also fetch REST snapshot to guarantee freshness
         this.fetchSnapshotViaRest();
       };
 
@@ -280,29 +210,21 @@ class LiveLocationService {
       };
 
       this.ws.onerror = () => {
-        // Fallback gracefully: maintain connected status via local real-time engine
-        if (this.connectFallbackTimeout) {
-          clearTimeout(this.connectFallbackTimeout);
-          this.connectFallbackTimeout = null;
-        }
-        this.status = 'connected';
+        // On error, fallback to REST polling without breaking UI
+        this.status = 'disconnected';
         this.notify();
       };
 
       this.ws.onclose = () => {
+        this.status = 'disconnected';
         this.stopHeartbeat();
-        // If custom worker was set, attempt gentle background retry without flipping status to red
-        if (this.customServerUrl) {
-          this.scheduleReconnect();
-        } else {
-          // Local engine remains stably connected
-          this.status = 'connected';
-          this.notify();
-        }
+        this.notify();
+        this.scheduleReconnect();
       };
     } catch (err) {
-      this.status = 'connected';
+      this.status = 'disconnected';
       this.notify();
+      this.scheduleReconnect();
     }
   }
 
@@ -324,10 +246,8 @@ class LiveLocationService {
     if (this.reconnectTimeout) return;
     this.reconnectTimeout = setTimeout(() => {
       this.reconnectTimeout = null;
-      if (this.customServerUrl) {
-        this.connect();
-      }
-    }, 8000);
+      this.connect();
+    }, 4000);
   }
 
   private startHeartbeat() {
@@ -347,18 +267,6 @@ class LiveLocationService {
     }
   }
 
-  // Subtle real-world jitter for live indicator (20ms - 28ms)
-  private startJitterHeartbeat() {
-    if (this.jitterInterval) return;
-    this.jitterInterval = setInterval(() => {
-      if (this.status === 'connected') {
-        const delta = Math.floor(Math.random() * 5) - 2; // -2 to +2
-        this.latencyMs = Math.max(18, Math.min(32, this.latencyMs + delta));
-        this.notify();
-      }
-    }, 7000);
-  }
-
   private handleIncomingMessage(msg: any) {
     if (msg.type === 'PONG') {
       if (this.pingStartTime > 0) {
@@ -369,7 +277,7 @@ class LiveLocationService {
     }
 
     if (msg.type === 'SYNC_STATE') {
-      if (Array.isArray(msg.drivers) && msg.drivers.length > 0) {
+      if (Array.isArray(msg.drivers)) {
         msg.drivers.forEach((d: LiveDriverLocation) => this.drivers.set(d.id, d));
       }
       if (Array.isArray(msg.passengers)) {
@@ -424,7 +332,7 @@ class LiveLocationService {
     this.fetchSnapshotViaRest();
     this.restPollInterval = setInterval(() => {
       this.fetchSnapshotViaRest();
-    }, 6000);
+    }, 4000);
   }
 
   public stopRestPolling() {
@@ -443,18 +351,20 @@ class LiveLocationService {
       const res = await fetch(endpoint, { cache: 'no-store' });
       if (res.ok) {
         const data = await res.json();
-        this.latencyMs = Math.max(12, Date.now() - start);
-        if (Array.isArray(data.drivers) && data.drivers.length > 0) {
+        this.latencyMs = Math.max(8, Date.now() - start);
+        if (Array.isArray(data.drivers)) {
           data.drivers.forEach((d: LiveDriverLocation) => this.drivers.set(d.id, d));
         }
         if (Array.isArray(data.passengers)) {
           data.passengers.forEach((p: LivePassengerLocation) => this.passengers.set(p.id, p));
         }
-        this.status = 'connected';
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+          this.status = 'connected';
+        }
         this.notify();
       }
     } catch (e) {
-      // Quiet background fallback: local state remains fully active
+      // REST snapshot error
     }
   }
 
@@ -482,11 +392,9 @@ class LiveLocationService {
       });
     } catch (e) {}
 
-    // Send via WebSocket if open
+    // Send via WebSocket
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify(payload));
-      } catch (e) {}
+      this.ws.send(JSON.stringify(payload));
     } else {
       // Send via HTTP REST fallback
       this.sendHttpUpdate('driver', payload.data);
@@ -515,11 +423,9 @@ class LiveLocationService {
       });
     } catch (e) {}
 
-    // Send via WebSocket if open
+    // Send via WebSocket
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify(payload));
-      } catch (e) {}
+      this.ws.send(JSON.stringify(payload));
     } else {
       // Send via HTTP REST fallback
       this.sendHttpUpdate('passenger', payload.data);
@@ -537,9 +443,7 @@ class LiveLocationService {
 
     const payload = { type: 'REMOVE_USER', role, id };
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      try {
-        this.ws.send(JSON.stringify(payload));
-      } catch (e) {}
+      this.ws.send(JSON.stringify(payload));
     } else {
       const baseUrl = this.customServerUrl ? this.customServerUrl.replace(/\/+$/, '') : '';
       fetch(`${baseUrl}/api/live/remove`, {

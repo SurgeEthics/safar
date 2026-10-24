@@ -49,8 +49,7 @@ import {
   Key,
   ArrowUpDown,
   Sparkles,
-  Camera,
-  Download
+  Camera
 } from 'lucide-react';
 import L from 'leaflet';
 import { SafarLogo } from './components/SafarLogo';
@@ -73,7 +72,6 @@ import { GAFARGAON_PLACES, resolveLocationCoordinates } from './data/gafargaonPl
 import { GafargaonMap } from './components/GafargaonMap';
 import { CloudflareSettingsModal } from './components/CloudflareSettingsModal';
 import { useLiveTracking } from './hooks/useLiveTracking';
-import { liveLocationService } from './services/liveLocationService';
 
 export type VehicleCategory = string;
 export type AppUserRole = 'passenger' | 'driver';
@@ -1097,14 +1095,11 @@ export default function App() {
     });
   });
 
-  // Automatically persist drivers & sync to live location edge service
+  // Automatically persist drivers
   useEffect(() => {
     try {
       localStorage.setItem('safar_drivers_v4', JSON.stringify(drivers));
     } catch {}
-    if (drivers && drivers.length > 0) {
-      liveLocationService.syncDriversFromCatalog(drivers);
-    }
   }, [drivers]);
 
   // Real-time Firestore Sync for Drivers
@@ -3157,7 +3152,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col selection:bg-emerald-600 selection:text-white font-['Hind_Siliguri',sans-serif]">
       {/* PWA 1-Tap Mobile Install Banner & Viral Share Modal */}
-      <PWAInstallBanner />
+      <PWAInstallBanner customAppUrl={appCustomSettings.customAppUrl} />
       
       {/* ============================================================== */}
       {/* 1. TOP HEADER (BRANDING & DRIVER REGISTRATION BUTTON)           */}
@@ -4092,7 +4087,6 @@ export default function App() {
                 latencyMs={serverState.latencyMs}
                 serverType={serverState.serverType}
                 onOpenServerSettings={() => setShowCloudflareModal(true)}
-                isAdmin={isAdminLoggedIn}
                 userGps={liveGps}
                 onStartGpsTracking={startGpsTracking}
                 userRole={userRole}
@@ -4295,18 +4289,18 @@ export default function App() {
                   <img
                     src={selectedDriver.driverPhoto}
                     alt={selectedDriver.name}
-                    className="w-[60px] h-[60px] sm:w-[66px] sm:h-[66px] rounded-2xl object-cover border-2 border-emerald-400 shadow-md bg-slate-800"
+                    className="w-[52px] h-[52px] sm:w-[66px] sm:h-[66px] rounded-2xl object-cover border-2 border-emerald-400 shadow-md bg-slate-800"
                   />
                 ) : (
-                  <div className="w-[60px] h-[60px] sm:w-[66px] sm:h-[66px] rounded-2xl border-2 border-slate-700 bg-slate-800 flex flex-col items-center justify-center text-slate-400 shadow-md">
-                    <User className="w-6 h-6 text-slate-400" />
-                    <span className="text-[8px] font-bold text-slate-400 mt-0.5">ছবি নেই</span>
+                  <div className="w-[52px] h-[52px] sm:w-[66px] sm:h-[66px] rounded-2xl border-2 border-slate-700 bg-slate-800 flex flex-col items-center justify-center text-slate-400 shadow-md">
+                    <User className="w-5 h-5 sm:w-6 sm:h-6 text-slate-400" />
+                    <span className="text-[7.5px] sm:text-[8px] font-bold text-slate-400 mt-0.5">ছবি নেই</span>
                   </div>
                 )}
               </div>
 
               {/* MIDDLE: 3 Lines of Text (Parallel height) */}
-              <div className="flex-1 min-w-0 flex flex-col justify-between h-[60px] sm:h-[66px] py-0.5">
+              <div className="flex-1 min-w-0 flex flex-col justify-between h-[52px] sm:h-[66px] py-0.5">
                 {/* Line 1: Status & Rating */}
                 <div className="flex items-center gap-1.5 flex-wrap leading-none">
                   <span className="bg-emerald-500 text-white text-[9.5px] font-black px-2 py-0.5 rounded-full inline-flex items-center shadow-sm">
@@ -4342,10 +4336,10 @@ export default function App() {
                 </div>
               </div>
 
-              {/* RIGHT: Category Vehicle Icon Badge (Hidden on mobile) & Close Button */}
-              <div className="flex items-center gap-2 shrink-0">
-                {/* Category Vehicle Icon Badge (Hidden on mobile to provide full width to driver information) */}
-                <div className={`hidden sm:flex w-[60px] h-[60px] sm:w-[66px] sm:h-[66px] rounded-2xl ${selectedDriver.avatarBg} text-white items-center justify-center shadow-lg border-2 border-white/80 shrink-0 text-2xl`}>
+              {/* RIGHT: Category Vehicle Icon Badge & Close Button */}
+              <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+                {/* Category Vehicle Icon Badge (Visible on mobile and desktop, pixel-perfect parallel) */}
+                <div className={`flex w-[52px] h-[52px] sm:w-[66px] sm:h-[66px] rounded-2xl ${selectedDriver.avatarBg} text-white items-center justify-center shadow-lg border-2 border-white/80 shrink-0 text-xl sm:text-2xl`}>
                   {selectedDriver.category === 'ambulance' ? '🚑' :
                    selectedDriver.category === 'cng' ? '🛺' :
                    selectedDriver.category === 'auto' ? '🔋' :
@@ -5873,7 +5867,7 @@ export default function App() {
           {/* Admin Control Bar: STRICTLY visible only when admin is already authenticated */}
           {isAdminLoggedIn && (
             <div className="mt-3 pt-2.5 border-t border-emerald-900/60 flex items-center justify-center gap-3 text-xs animate-in fade-in">
-              <div className="inline-flex items-center gap-2 bg-emerald-900/90 px-3 py-1.5 rounded-lg border border-emerald-500/50 shadow-xs flex-wrap justify-center">
+              <div className="inline-flex items-center gap-2 bg-emerald-900/90 px-3 py-1.5 rounded-lg border border-emerald-500/50 shadow-xs">
                 <button
                   type="button"
                   onClick={() => setShowAdminDashboard(true)}
@@ -5882,16 +5876,6 @@ export default function App() {
                   <Shield className="w-3.5 h-3.5 text-amber-400" />
                   <span>কন্ট্রোল প্যানেল খুলুন</span>
                 </button>
-                <span className="text-emerald-500">|</span>
-                <a
-                  href="/safar-gafargaon-source.zip"
-                  download="safar-gafargaon-source.zip"
-                  className="inline-flex items-center gap-1.5 text-emerald-300 hover:text-white text-xs font-bold transition-colors cursor-pointer"
-                  title="সম্পূর্ণ প্রজেক্ট সোর্স কোড জিপ (GitHub ও Cloudflare রেডি)"
-                >
-                  <Download className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>সোর্স জিপ (.zip)</span>
-                </a>
                 <span className="text-emerald-500">|</span>
                 <button
                   type="button"
@@ -5993,7 +5977,6 @@ export default function App() {
       <AdminControlPanel
         isOpen={showAdminDashboard}
         onClose={() => setShowAdminDashboard(false)}
-        onOpenCloudflareSettings={() => setShowCloudflareModal(true)}
         stands={stands}
         onSaveStand={(stand, isEdit) => {
           if (isEdit) {
@@ -7229,7 +7212,7 @@ export default function App() {
         status={serverState.status}
         latencyMs={serverState.latencyMs}
         serverType={serverState.serverType}
-        activeDriversCount={serverState.drivers.length > 0 ? serverState.drivers.length : drivers.filter(d => d.isOnline).length}
+        activeDriversCount={serverState.drivers.length}
         activePassengersCount={serverState.passengers.length}
       />
 
